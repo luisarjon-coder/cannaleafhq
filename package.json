@@ -1,0 +1,9 @@
+{
+  "name": "cannaleafhq",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Canna Leaf HQ -- static site plus one Vercel serverless function for product-request push notifications.",
+  "dependencies": {
+    "web-push": "^3.6.7"
+  }
+}
