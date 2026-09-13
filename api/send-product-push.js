@@ -1,7 +1,10 @@
 // Canna Leaf HQ -- sends a real push notification (reaches a phone even if the app
-// isn't open) whenever a new product request is added. Supabase calls this via a
-// Database Webhook on every INSERT into the "documents" table; this function ignores
-// anything that isn't a product request and only acts on those rows.
+// isn't open) whenever a new product request, task, or announcement is added.
+// Supabase calls this via a Database Webhook on every INSERT into the "documents"
+// table; this function ignores anything it doesn't recognize and only acts on those
+// three kinds of rows. Tasks and announcements go out to EVERY device that has
+// notifications turned on for that location (no recipient picking, unlike product
+// requests) -- that's the whole team and every admin.
 //
 // Required Vercel environment variables (Project Settings -> Environment Variables):
 //   VAPID_PUBLIC_KEY          -- same value as VAPID_PUBLIC_KEY in index.html
@@ -34,23 +37,40 @@ module.exports = async function handler(req, res) {
   const body = req.body || {};
   const record = body.record || {};
   const collection = record.collection || "";
-
-  // The webhook fires for every insert into the shared "documents" table (members, promoters,
-  // everything) -- silently ignore anything that isn't a brand-new product request.
-  if (!/__productRequests$/.test(collection)) {
-    res.status(200).json({ skipped: true, reason: "not a productRequests row" });
-    return;
-  }
-
-  const locationId = collection.replace(/__productRequests$/, "");
   const data = record.data || {};
 
-  const stockLabel = data.stock === "out" ? "OUT OF STOCK" : data.stock === "almost_out" ? "almost out" : "requested";
-  const title = "Product request: " + (data.item || "an item");
-  var bodyLines = [stockLabel];
-  if (data.employee) bodyLines.push("by " + data.employee);
-  if (data.notes) bodyLines.push(data.notes);
-  const pushBody = bodyLines.join(" — ");
+  // The webhook fires for every insert into the shared "documents" table (members, promoters,
+  // everything) -- work out which of the three pushable kinds this is, and build the
+  // notification for it. Anything else is silently ignored.
+  let locationId, title, pushBody, tag;
+
+  if (/__productRequests$/.test(collection)) {
+    locationId = collection.replace(/__productRequests$/, "");
+    const stockLabel = data.stock === "out" ? "OUT OF STOCK" : data.stock === "almost_out" ? "almost out" : "requested";
+    title = "Product request: " + (data.item || "an item");
+    var reqLines = [stockLabel];
+    if (data.employee) reqLines.push("by " + data.employee);
+    if (data.notes) reqLines.push(data.notes);
+    pushBody = reqLines.join(" — ");
+    tag = "product-request";
+  } else if (/__tasks$/.test(collection)) {
+    locationId = collection.replace(/__tasks$/, "");
+    title = "📋 New task";
+    var taskLines = [data.text || "New task"];
+    if (data.assignee) taskLines.push("assigned to " + data.assignee);
+    pushBody = taskLines.join(" — ");
+    tag = "task";
+  } else if (/__announcements$/.test(collection)) {
+    locationId = collection.replace(/__announcements$/, "");
+    title = "📣 Announcement";
+    var annLines = [data.text || ""];
+    if (data.author) annLines.push(data.author);
+    pushBody = annLines.join(" — ");
+    tag = "announcement";
+  } else {
+    res.status(200).json({ skipped: true, reason: "not a pushable row" });
+    return;
+  }
 
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     res.status(500).json({ error: "server misconfigured (missing Supabase env vars)" });
@@ -85,7 +105,7 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const payload = JSON.stringify({ title: title, body: pushBody, tag: "product-request", url: "/" });
+  const payload = JSON.stringify({ title: title, body: pushBody, tag: tag, url: "/" });
   const results = await Promise.all(
     (rows || []).map(async function (row) {
       const sub = row.data || {};
