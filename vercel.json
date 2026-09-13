@@ -1,0 +1,9 @@
+{
+  "crons": [
+    {
+      "path": "/api/check-late-shifts",
+      "schedule": "35 9 * * *"
+    }
+  ]
+}
+
